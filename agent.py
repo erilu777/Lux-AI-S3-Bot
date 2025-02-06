@@ -1,69 +1,85 @@
-from lux.utils import direction_to
-import sys
 import numpy as np
-class Agent():
+from dataclasses import dataclass
+from typing import Dict, Set, List, Tuple
+
+@dataclass
+class MapInfo:
+    """Track map features"""
+    explored_tiles: Set[Tuple[int, int]] = None
+    nebula_tiles: Set[Tuple[int, int]] = None
+    energy_nodes: List[Tuple[int, int]] = None
+    relic_nodes: List[Tuple[int, int]] = None
+    
+    def __post_init__(self):
+        self.explored_tiles = set()
+        self.nebula_tiles = set()
+        self.energy_nodes = []
+        self.relic_nodes = []
+
+class Agent:
     def __init__(self, player: str, env_cfg) -> None:
         self.player = player
-        self.opp_player = "player_1" if self.player == "player_0" else "player_0"
-        self.team_id = 0 if self.player == "player_0" else 1
-        self.opp_team_id = 1 if self.team_id == 0 else 0
-        np.random.seed(0)
+        self.team_id = 0 if player == "player_0" else 1
         self.env_cfg = env_cfg
+        self.map_info = MapInfo()
         
-        self.relic_node_positions = []
-        self.discovered_relic_nodes_ids = set()
-        self.unit_explore_locations = dict()
+        # Game parameters we need to learn
+        self.learned_params = {
+            'unit_move_cost': None,
+            'nebula_vision_reduction': None,
+            'unit_sap_cost': None
+        }
+    
+    def update_map_knowledge(self, obs):
+        """Update what we know about the map"""
+        unit_positions = np.array(obs["units"]["position"][self.team_id])
+        unit_mask = np.array(obs["units_mask"][self.team_id])
+        
+        # Update explored areas
+        for unit_id in np.where(unit_mask)[0]:
+            pos = tuple(map(int, unit_positions[unit_id]))
+            self.map_info.explored_tiles.add(pos)
+            
+        # Track relic nodes
+        relic_mask = np.array(obs["relic_nodes_mask"])
+        relic_positions = np.array(obs["relic_nodes"])
+        for idx in np.where(relic_mask)[0]:
+            pos = tuple(map(int, relic_positions[idx]))
+            if pos not in self.map_info.relic_nodes:
+                self.map_info.relic_nodes.append(pos)
 
     def act(self, step: int, obs, remainingOverageTime: int = 60):
-        """implement this function to decide what actions to send to each available unit. 
-        
-        step is the current timestep number of the game starting from 0 going up to max_steps_in_match * match_count_per_episode - 1.
-        """
-        unit_mask = np.array(obs["units_mask"][self.team_id]) # shape (max_units, )
-        unit_positions = np.array(obs["units"]["position"][self.team_id]) # shape (max_units, 2)
-        unit_energys = np.array(obs["units"]["energy"][self.team_id]) # shape (max_units, 1)
-        observed_relic_node_positions = np.array(obs["relic_nodes"]) # shape (max_relic_nodes, 2)
-        observed_relic_nodes_mask = np.array(obs["relic_nodes_mask"]) # shape (max_relic_nodes, )
-        team_points = np.array(obs["team_points"]) # points of each team, team_points[self.team_id] is the points of the your team
-        
-        # ids of units you can control at this timestep
-        available_unit_ids = np.where(unit_mask)[0]
-        # visible relic nodes
-        visible_relic_node_ids = set(np.where(observed_relic_nodes_mask)[0])
-        
         actions = np.zeros((self.env_cfg["max_units"], 3), dtype=int)
-
-
-        # basic strategy here is simply to have some units randomly explore and some units collecting as much energy as possible
-        # and once a relic node is found, we send all units to move randomly around the first relic node to gain points
-        # and information about where relic nodes are found are saved for the next match
         
-        # save any new relic nodes that we discover for the rest of the game.
-        for id in visible_relic_node_ids:
-            if id not in self.discovered_relic_nodes_ids:
-                self.discovered_relic_nodes_ids.add(id)
-                self.relic_node_positions.append(observed_relic_node_positions[id])
-            
+        # Update knowledge
+        self.update_map_knowledge(obs)
+        
+        # Get available units
+        unit_mask = np.array(obs["units_mask"][self.team_id])
+        unit_positions = np.array(obs["units"]["position"][self.team_id])
+        unit_energy = np.array(obs["units"]["energy"][self.team_id])
+        available_units = np.where(unit_mask)[0]
 
-        # unit ids range from 0 to max_units - 1
-        for unit_id in available_unit_ids:
-            unit_pos = unit_positions[unit_id]
-            unit_energy = unit_energys[unit_id]
-            if len(self.relic_node_positions) > 0:
-                nearest_relic_node_position = self.relic_node_positions[0]
-                manhattan_distance = abs(unit_pos[0] - nearest_relic_node_position[0]) + abs(unit_pos[1] - nearest_relic_node_position[1])
+        # Simple exploration for now
+        for unit_id in available_units:
+            if unit_energy[unit_id] < 10:  # Ensure enough energy to move
+                continue
                 
-                # if close to the relic node we want to hover around it and hope to gain points
-                if manhattan_distance <= 4:
-                    random_direction = np.random.randint(0, 5)
-                    actions[unit_id] = [random_direction, 0, 0]
-                else:
-                    # otherwise we want to move towards the relic node
-                    actions[unit_id] = [direction_to(unit_pos, nearest_relic_node_position), 0, 0]
-            else:
-                # randomly explore by picking a random location on the map and moving there for about 20 steps
-                if step % 20 == 0 or unit_id not in self.unit_explore_locations:
-                    rand_loc = (np.random.randint(0, self.env_cfg["map_width"]), np.random.randint(0, self.env_cfg["map_height"]))
-                    self.unit_explore_locations[unit_id] = rand_loc
-                actions[unit_id] = [direction_to(unit_pos, self.unit_explore_locations[unit_id]), 0, 0]
+            # TODO: 
+            # - Implement more sophisticated exploration
+            # - Implement unit actions
+            # - Implement unit movement
+            # - Implement targeting of relic nodes
+            # - Iplement unit energy management
+            # - Implement unit vision management
+            # - Implement unit sap management
+            # - Implement unit pathfinding
+            # - Implement updating of learned parameters
+            # - Implement more sophisticated world representation
+            # - Implement more sophisticated unit representation
+            # - Etc etc etc...
+
+            # Move up     
+            actions[unit_id] = [1, 0, 0]
+
         return actions
